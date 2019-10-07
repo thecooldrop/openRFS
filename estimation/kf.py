@@ -20,11 +20,16 @@ def predict(states: np.ndarray,
 
     :param process_covariance: Numpy array of shape MxM
 
-    :param control: Numpy array for storing either a single control vector in row form
+    :param control: Numpy array for storing single control vector in row form
 
     :param control_transition: Transition matrices for control vectors
 
     :return: Predicted states and covariances
+
+    Usage:
+    This function can be used to create compute prediction of many states at once. Limitation to vectorization is that
+    all states are predicted with same transition model. It is also assumed that there is only single control vector
+    which is applied to all predicted states.
     """
 
     # ensure that states is in row form
