@@ -28,17 +28,14 @@ def predict(states: np.ndarray,
     """
 
     # ensure that states is in row form
-    if states.ndim > 1:
-        dim = states.shape[1]
-    else:
-        dim = states.shape[0]
-        states = states[np.newaxis]
+    states = np.atleast_2d(states);
+    dim = states.shape[1];
 
     # initialize the control vector or ensure it is in row form
     if not control:
         control = np.zeros((1, dim))
     else:
-        control = control.reshape((1, dim))
+        control = np.atleast_2d(control)
 
     # initialize control transition or ensure that it is in form for vectorized operations
     if not control_transition:
