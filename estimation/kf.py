@@ -33,25 +33,18 @@ def predict(states: np.ndarray,
     """
 
     # ensure that states is in row form
-    if states.ndim > 1:
-        dim = states.shape[1]
-    else:
-        dim = states.shape[0]
-        states = states[np.newaxis]
+    states = np.atleast_2d(states);
+    dim = states.shape[1];
 
     # initialize the control vector or ensure it is in row form
     if not control:
         control = np.zeros((1, dim))
     else:
-        control = control.reshape((1, dim))
+        control = np.atleast_2d(control)
 
     # initialize control transition or ensure that it is in form for vectorized operations
     if not control_transition:
         control_transition = np.eye(dim)
-
-    # prepare matrices for vectorized operations
-    if transition.ndim == 2:
-        transition = transition[np.newaxis]
 
     predicted_states = states @ transition.T + control @ control_transition.T
     predicted_covariances = transition @ covariances @ transition.T + process_covariance
@@ -64,7 +57,6 @@ def update(states: np.ndarray,
            measurement_matrix: np.ndarray,
            measurement_noise_covariance: np.ndarray,
            measurements: np.ndarray):
-
     """
 
     :param states: Numpy array storing N states, where each row represents a state
@@ -91,8 +83,6 @@ def update(states: np.ndarray,
     # matrix times vector operations are transposed because the states and measurements are viewed as stored in rows
     if measurement_matrix.ndim < 3:
         measurement_matrix = measurement_matrix[np.newaxis]
-
-
 
     innovation = measurements - states @ measurement_matrix.T
     innovation_covariance = measurement_noise_covariance + measurement_matrix @ covariances @ measurement_matrix.T
