@@ -1,6 +1,6 @@
 import numpy as np
-from typing import  Callable
-
+from typing import Optional, Callable
+from ops import matops
 
 def predict(states: np.ndarray,
             covariances: np.ndarray,
@@ -23,6 +23,7 @@ def predict(states: np.ndarray,
     Usage:
     Note that alpha can also be an array, so that each
     """
+
 
     dim = states.shape[1]
     lmbd = alpha ** 2 * (dim + ket) - dim
@@ -47,6 +48,7 @@ def update(states,
            beta,
            ket,
            measurements):
+
     dim = states.shape[1]
     lmbd = alpha ** 2 * (dim + ket) - dim
 
@@ -61,13 +63,14 @@ def update(states,
     innovation_covariances = np.sum(scaled_deviation[:, :, :, np.newaxis] @ deviation[:, :, np.newaxis],
                                     axis=1) + measurement_noise
 
+
     sigma_deviation = sigma_points - states[:, np.newaxis]
     scaled_sigma_deviation = c_weights[:, np.newaxis] * sigma_deviation
     kalman_factor = np.sum(scaled_sigma_deviation[:, :, :, np.newaxis] @ sigma_deviation[:, :, np.newaxis], axis=1)
-
-    kalman_gain = kalman_factor @ np.linalg.inv(innovation_covariances)
-    innovation = measurements[:, np.newaxis, :] - mean_measurement
-    updated_states = states[:, np.newaxis] + innovation @ np.transpose(kalman_gain, (0, 2, 1))
+    inv_inno = np.linalg.inv(innovation_covariances)
+    kalman_gain = kalman_factor @ inv_inno
+    innovation = measurements - mean_measurement
+    updated_states = states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
     updated_covariances = covariances - kalman_gain @ innovation_covariances @ np.transpose(kalman_gain, (0, 2, 1))
     return np.squeeze(updated_states), updated_covariances
 
@@ -89,3 +92,27 @@ def compute_sigma_points(states, covariances, lmbd, n):
     sig_second = states[:, np.newaxis] - np.transpose(root_covariances, (0, 2, 1))
     sigma_points = np.concatenate((states[:, np.newaxis], sig_first, sig_second), axis=1)
     return sigma_points
+
+
+if __name__ == "__main__":
+    import timeit
+    import functools
+
+    states = np.random.rand(500, 3)
+    covs = np.random.rand(500, 3, 3)
+    covs = 1 / 2 * (covs + np.transpose(covs, (0, 2, 1))) +  10*np.eye(3)
+
+
+    def trans(state):
+        return state
+
+
+    measurements = np.random.rand(500, 3)
+    par_predict = functools.partial(predict, states, covs, trans, covs[0], 1, 2, 1)
+    par_update = functools.partial(update, states, covs, trans, covs[0], 1, 2, 1, measurements)
+    timep = min(timeit.Timer(par_predict).repeat(1, 100))
+    timeu = min(timeit.Timer(par_update).repeat(1,100))
+
+    print(timep / 100)
+    print(timeu / 100)
+    print(timeu/timep)
