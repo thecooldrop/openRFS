@@ -1,6 +1,6 @@
 import numpy as np
-from typing import Optional, Callable
-from ops import matops
+from typing import Callable
+
 
 def predict(states: np.ndarray,
             covariances: np.ndarray,
@@ -23,7 +23,6 @@ def predict(states: np.ndarray,
     Usage:
     Note that alpha can also be an array, so that each
     """
-
 
     dim = states.shape[1]
     lmbd = alpha ** 2 * (dim + ket) - dim
@@ -48,31 +47,16 @@ def update(states,
            beta,
            ket,
            measurements):
-
-    dim = states.shape[1]
-    lmbd = alpha ** 2 * (dim + ket) - dim
-
-    sigma_points = compute_sigma_points(states, covariances, lmbd, dim)
-    c_weights, m_weights = compute_sigma_weights(alpha, beta, lmbd, dim)
-
-    expected_measurements = measurement_model(sigma_points)
-    mean_measurement = np.sum(m_weights[:, np.newaxis] * sigma_points, axis=1)
-
-    deviation = expected_measurements - mean_measurement[:, np.newaxis]
-    scaled_deviation = c_weights[:, np.newaxis] * deviation
-    innovation_covariances = np.sum(scaled_deviation[:, :, :, np.newaxis] @ deviation[:, :, np.newaxis],
-                                    axis=1) + measurement_noise
-
-
-    sigma_deviation = sigma_points - states[:, np.newaxis]
-    scaled_sigma_deviation = c_weights[:, np.newaxis] * sigma_deviation
-    kalman_factor = np.sum(scaled_sigma_deviation[:, :, :, np.newaxis] @ sigma_deviation[:, :, np.newaxis], axis=1)
-    inv_inno = np.linalg.inv(innovation_covariances)
-    kalman_gain = kalman_factor @ inv_inno
+    mean_measurement, innovation_covarainces, _, kalman_gain = compute_update_matrices(states,
+                                                                                       covariances,
+                                                                                       measurement_model,
+                                                                                       measurement_noise,
+                                                                                       alpha,
+                                                                                       beta,
+                                                                                       ket)
     innovation = measurements - mean_measurement
-    updated_states = states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
-    updated_covariances = covariances - kalman_gain @ innovation_covariances @ np.transpose(kalman_gain, (0, 2, 1))
-    return np.squeeze(updated_states), updated_covariances
+
+    return pure_update(states, covariances, innovation, innovation_covarainces, kalman_gain)
 
 
 def compute_sigma_weights(alpha, beta, lmbd, n):
@@ -94,25 +78,65 @@ def compute_sigma_points(states, covariances, lmbd, n):
     return sigma_points
 
 
+def compute_update_matrices(states,
+                            covariances,
+                            measurement_model,
+                            measurement_noise,
+                            alpha,
+                            beta,
+                            ket):
+    dim = states.shape[1]
+    lmbd = alpha ** 2 * (dim + ket) - dim
+
+    sigma_points = compute_sigma_points(states, covariances, lmbd, dim)
+    c_weights, m_weights = compute_sigma_weights(alpha, beta, lmbd, dim)
+
+    expected_measurements = measurement_model(sigma_points)
+    mean_measurement = np.sum(m_weights[:, np.newaxis] * sigma_points, axis=1)
+
+    deviation = expected_measurements - mean_measurement[:, np.newaxis]
+    scaled_deviation = c_weights[:, np.newaxis] * deviation
+    innovation_covariances = np.sum(scaled_deviation[:, :, :, np.newaxis] @ deviation[:, :, np.newaxis],
+                                    axis=1) + measurement_noise
+
+    sigma_deviation = sigma_points - states[:, np.newaxis]
+    scaled_sigma_deviation = c_weights[:, np.newaxis] * sigma_deviation
+    kalman_factor = np.sum(scaled_sigma_deviation[:, :, :, np.newaxis] @ sigma_deviation[:, :, np.newaxis], axis=1)
+
+    inv_inno = np.linalg.inv(innovation_covariances)
+    kalman_gain = kalman_factor @ inv_inno
+    return mean_measurement, innovation_covariances, inv_inno, kalman_gain
+
+
+def pure_update(states,
+                covariances,
+                innovation,
+                innovation_covariances,
+                kalman_gain):
+    updated_states = states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
+    updated_covariances = covariances - kalman_gain @ innovation_covariances @ np.transpose(kalman_gain, (0, 2, 1))
+    return updated_states, updated_covariances
+
+
 if __name__ == "__main__":
     import timeit
     import functools
 
-    states = np.random.rand(500, 3)
-    covs = np.random.rand(500, 3, 3)
-    covs = 1 / 2 * (covs + np.transpose(covs, (0, 2, 1))) +  10*np.eye(3)
+    states = np.random.rand(5000, 3)
+    covs = np.random.rand(5000, 3, 3)
+    covs = 1 / 2 * (covs + np.transpose(covs, (0, 2, 1))) + 10 * np.eye(3)
 
 
     def trans(state):
         return state
 
 
-    measurements = np.random.rand(500, 3)
+    measurements = np.random.rand(5000, 3)
     par_predict = functools.partial(predict, states, covs, trans, covs[0], 1, 2, 1)
     par_update = functools.partial(update, states, covs, trans, covs[0], 1, 2, 1, measurements)
     timep = min(timeit.Timer(par_predict).repeat(1, 100))
-    timeu = min(timeit.Timer(par_update).repeat(1,100))
+    timeu = min(timeit.Timer(par_update).repeat(1, 100))
 
     print(timep / 100)
     print(timeu / 100)
-    print(timeu/timep)
+    print(timeu / timep)

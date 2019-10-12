@@ -28,8 +28,7 @@ def predict(states: np.ndarray,
     """
 
     # ensure that states is in row form
-    states = np.atleast_2d(states);
-    dim = states.shape[1];
+    dim = states.shape[1]
 
     # initialize the control vector or ensure it is in row form
     if not control:
@@ -80,9 +79,31 @@ def update(states: np.ndarray,
         measurement_matrix = measurement_matrix[np.newaxis]
 
     innovation = measurements - states @ measurement_matrix.T
-    innovation_covariance = measurement_noise_covariance + measurement_matrix @ covariances @ measurement_matrix.T
+
+    _, _, kalman_gain = compute_update_matrices(covariances,
+                                                measurement_matrix,
+                                                measurement_noise_covariance)
+
+    return pure_update(states, covariances, innovation, kalman_gain, measurement_matrix)
+
+
+def compute_update_matrices(covariances,
+                            measurement_matrix,
+                            measurement_noise):
+
+    innovation_covariance = measurement_noise + measurement_matrix @ covariances @ measurement_matrix.T
     inv_innovation_covariances = np.linalg.inv(innovation_covariance)
     kalman_gain = covariances @ measurement_matrix.T @ inv_innovation_covariances
-    updated_states = states + innovation @ kalman_gain.T
+    return innovation_covariance, inv_innovation_covariances, kalman_gain
+
+
+def pure_update(states,
+                covariances,
+                innovation,
+                kalman_gain,
+                measurement_matrix):
+
+    dim = states.shape[1]
+    updated_states = states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
     updated_covariances = (np.eye(dim) - kalman_gain @ measurement_matrix) @ covariances
     return updated_states, updated_covariances
