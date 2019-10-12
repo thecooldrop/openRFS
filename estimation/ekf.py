@@ -44,7 +44,7 @@ def predict(states: np.ndarray,
         control_transition = np.eye(dim)
 
     # jacobis is 3D matrix, since each of them is linearized about different state
-    jacobis = np.atleast_3d(transition_jacobi(states))
+    jacobis = transition_jacobi(states)
     predicted_states = transition(states) + control @ control_transition.T
     predicted_covariances = jacobis @ covariances @ jacobis.transpose((0,2,1)) + process_covariance
 
@@ -71,13 +71,35 @@ def update(states: np.ndarray,
     # ensure states is in row form
     states = np.atleast_2d(states)
     dim = state.shape[1]
-    expected_measurements = np.atleast_2d(measurement_function(states))
-    jacobis = np.atleast_3d(measurement_jacobi(states))
+    expected_measurements = measurement_function(states)
     innovation = measurements - expected_measurements
-    innovation_covariance =  measurement_noise_covariance + jacobis @ covariances @ np.transpose(jacobis, (0,2,1))
+
+    jacobis, _, _, kalman_gain = compute_update_matrices(states,
+                                                         covariances,
+                                                         measurement_jacobi,
+                                                         measurement_noise_covariance)
+
+    return pure_update(states, covariances, innovation, jacobis, kalman_gain)
+
+
+def compute_update_matrices(states,
+                            covariances,
+                            measurement_jacobi,
+                            measurement_noise):
+
+    jacobis = measurement_jacobi(states)
+    innovation_covariance = measurement_noise + jacobis @ covariances @ np.transpose(jacobis, (0, 2, 1))
     inv_innovation_covariance = np.linalg.inv(innovation_covariance)
-    kalman_gain = covariances @ np.transpose(jacobis, (0,2,1)) @ inv_innovation_covariance
-    updated_states = states + innovation @ np.transpose(kalman_gain, (0,2,1))
+    kalman_gain = covariances @ np.transpose(jacobis, (0, 2, 1)) @ inv_innovation_covariance
+    return  jacobis, innovation_covariance, inv_innovation_covariance, kalman_gain
+
+def pure_update(states,
+                covariances,
+                innovation,
+                jacobis,
+                kalman_gain):
+
+    dim = states.shape[1]
+    updated_states = states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
     updated_covariances = (np.eye(dim) - kalman_gain @ jacobis) @ covariances
     return updated_states, updated_covariances
-
