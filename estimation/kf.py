@@ -59,7 +59,7 @@ class KF(Kalman):
         kalman_gain = self.covariances @ self._measurement_model.T @ inv_innovation_covariances
         return innovation_covariance, inv_innovation_covariances, kalman_gain
 
-    def pure_update(self, innovation, kalman_gain):
+    def pure_update(self, innovation, kalman_gain, innovation_covariances=None):
         dim = self.states.shape[1]
         self.states = self.states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
         self.covariances = (np.eye(dim) - kalman_gain @ self._measurement_model) @ self.covariances

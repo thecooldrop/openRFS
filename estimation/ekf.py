@@ -55,7 +55,8 @@ class EKF(Kalman):
 
     def pure_update(self,
                     innovation,
-                    kalman_gain):
+                    kalman_gain,
+                    innovation_covariances=None):
 
         dim = self.states.shape[1]
         self.states = self.states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
