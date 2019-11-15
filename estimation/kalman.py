@@ -7,7 +7,7 @@ class Kalman(ABC):
         pass
 
     @abstractmethod
-    def update(self):
+    def update(self, measurements):
         pass
 
     @abstractmethod
@@ -15,5 +15,5 @@ class Kalman(ABC):
         pass
 
     @abstractmethod
-    def pure_update(self):
+    def pure_update(self, innovations, kalman_gains):
         pass
