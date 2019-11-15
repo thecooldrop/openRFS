@@ -1,101 +1,63 @@
 import numpy as np
-from typing import Optional
 from estimation.kalman import Kalman
 
 
 class EKF(Kalman):
 
-    def __init__(self, transition_model, transition_jacobi, transition_noise,
-                 measurement_model, measurement_jacobi, measurement_noise):
-        self.transition_model = transition_model
-        self.transition_noise = transition_noise
-        self.transition_jacobi = transition_jacobi
-        self.measurement_model = measurement_model
-        self.measurement_noise = measurement_noise
-        self.measurement_jacobi = measurement_jacobi
+    def __init__(self,
+                 transition_model,
+                 transition_jacobi,
+                 transition_noise,
+                 measurement_model,
+                 measurement_jacobi,
+                 measurement_noise,
+                 states=None,
+                 covariances=None):
 
-    def predict(self,
-                states: np.ndarray,
-                covariances: np.ndarray,
-                control: Optional[np.ndarray] = None,
-                control_transition: Optional[np.ndarray] = None):
+        self._transition_model = transition_model
+        self._transition_noise = transition_noise
+        self._transition_jacobi = transition_jacobi
+        self._measurement_model = measurement_model
+        self._measurement_noise = measurement_noise
+        self._measurement_jacobi = measurement_jacobi
+
+        self.states = states
+        self.covariances = covariances
+
+    def predict(self):
         """
-        Computes the predict step of extended Kalman filter
-
-        :param states: Numpy array storing N states, where each row represents a state
-
-        :param covariances: Numpy array storing covariances matching to states in NxMxM format where M is dimensionality
-                            of state vector
-
-        :param control: Numpy array for storing either a single control vector or MxN matrix storing N control vectors,
-                        one for each of the states
-
-        :param control_transition: Transition matrices for control vectors
-
-        :return: Predicted states and covariances
+        :return: None
         """
-
-        # ensure that states is in row form
-        states = np.atleast_2d(states)
-        dim = states.shape[1]
-
-        # initialize the control vector or ensure it is in row form
-        if not control:
-            control = np.zeros((1, dim))
-        else:
-            control = np.atleast_2d(control)
-
-        # initialize control transition or ensure that it is in form for vectorized operations
-        if not control_transition:
-            control_transition = np.eye(dim)
 
         # jacobis is 3D matrix, since each of them is linearized about different state
-        jacobis = self.transition_jacobi(states)
-        predicted_states = self.transition_model(states) + control @ control_transition.T
-        predicted_covariances = jacobis @ covariances @ jacobis.transpose((0, 2, 1)) + self.transition_noise
+        jacobis = self._transition_jacobi(self.states)
+        self.states = self._transition_model(self.states)
+        self.covariances = jacobis @ self.covariances @ jacobis.transpose((0, 2, 1)) + self._transition_noise
 
-        return predicted_states, predicted_covariances
-
-    def update(self,
-               states: np.ndarray,
-               covariances: np.ndarray,
-               measurements: np.ndarray):
+    def update(self, measurements):
         """
-
-        :param states: Numpy array storing N states, where each row represents a state
-        :param covariances: Numpy array storing covariances matching to states in NxMxM format where M is dimensionality
-                            of state vector
         :param measurements:
-        :return:
+        :return: None
         """
         # ensure states is in row form
-        states = np.atleast_2d(states)
-        expected_measurements = self.measurement_model(states)
+        expected_measurements = self._measurement_model(self.states)
         innovation = measurements - expected_measurements
+        jacobis, _, _, kalman_gain = self.compute_update_matrices()
+        self.pure_update(innovation, kalman_gain)
 
-        jacobis, _, _, kalman_gain = self.compute_update_matrices(states,
-                                                                  covariances)
+    def compute_update_matrices(self):
 
-        return self.pure_update(states, covariances, innovation, jacobis, kalman_gain)
-
-    def compute_update_matrices(self,
-                                states,
-                                covariances):
-
-        jacobis = self.measurement_jacobi(states)
-        innovation_covariance = self.measurement_noise + jacobis @ covariances @ np.transpose(jacobis, (0, 2, 1))
+        jacobis = self._measurement_jacobi(self.states)
+        innovation_covariance = self._measurement_noise + jacobis @ self.covariances @ np.transpose(jacobis, (0, 2, 1))
         inv_innovation_covariance = np.linalg.inv(innovation_covariance)
-        kalman_gain = covariances @ np.transpose(jacobis, (0, 2, 1)) @ inv_innovation_covariance
+        kalman_gain = self.covariances @ np.transpose(jacobis, (0, 2, 1)) @ inv_innovation_covariance
         return jacobis, innovation_covariance, inv_innovation_covariance, kalman_gain
 
     def pure_update(self,
-                    states,
-                    covariances,
                     innovation,
-                    jacobis,
                     kalman_gain):
 
-        dim = states.shape[1]
-        updated_states = states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
-        updated_covariances = (np.eye(dim) - kalman_gain @ jacobis) @ covariances
-        return updated_states, updated_covariances
+        dim = self.states.shape[1]
+        self.states = self.states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
+        jacobis = self._measurement_jacobi(self.states)
+        self.covariances = (np.eye(dim) - kalman_gain @ jacobis) @ self.covariances
