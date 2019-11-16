@@ -9,3 +9,12 @@ class Kalman(ABC):
     @abstractmethod
     def update(self, measurements):
         pass
+
+    @abstractmethod
+    def pure_update(self):
+        pass
+
+    @abstractmethod
+    def compute_update_matrices(self):
+        pass
+

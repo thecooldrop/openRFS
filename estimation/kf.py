@@ -10,15 +10,21 @@ class KF(Kalman):
                  measurement_model,
                  measurement_noise,
                  states=None,
-                 covariances=None):
-
+                 covariances=None,
+                 innovation=None,
+                 innovation_covariances=None,
+                 inv_innovation_covariances=None,
+                 kalman_gains=None):
         self._transition_model = transition_model
         self._transition_noise = transition_noise
         self._measurement_model = measurement_model
         self._measurement_noise = measurement_noise
-
-        self.states = states
-        self.covariances = covariances
+        self._innovation = innovation
+        self._innovation_covariances = innovation_covariances
+        self._inv_innovation_covariances = inv_innovation_covariances
+        self._kalman_gains = kalman_gains
+        self._states = states
+        self._covariances = covariances
 
     def predict(self):
         """
@@ -26,13 +32,13 @@ class KF(Kalman):
 
         :return: None
 
-        Usage: This function can be used to create compute prediction of many states at once. Limitation to
+        Usage: This function can be used to compute prediction of many states at once. Limitation to
         vectorization is that all states are predicted with same transition model. It is also assumed that there is
         only single control vector which is applied to all predicted states.
         """
 
-        self.states = self.states @ self._transition_model.T
-        self.covariances = self._transition_model @ self.covariances @ self._transition_model.T
+        self._states = self._states @ self._transition_model.T
+        self._covariances = self._transition_model @ self._covariances @ self._transition_model.T
 
     def update(self, measurements):
         """
@@ -40,26 +46,21 @@ class KF(Kalman):
 
         :return: Returns updated states and covariance matrices
         """
-
-        # matrix times vector operations are transposed because the states and measurements are viewed as stored in rows
-        if self._measurement_noise.ndim < 3:
-            self._measurement_noise = self._measurement_noise[np.newaxis]
-
-        innovation = measurements - self.states @ self._measurement_model.T
-
-        _, _, kalman_gain = self.compute_update_matrices()
-
-        self.pure_update(innovation, kalman_gain)
+        num_meas = measurements.shape[0]
+        self._innovation = measurements[:, np.newaxis, :] - self._states @ self._measurement_model.T
+        self._innovation = np.transpose(self._innovation, (1, 0, 2))
+        self.compute_update_matrices()
+        self._covariances = np.repeat(self._covariances, num_meas, axis=0)
+        self.pure_update()
 
     def compute_update_matrices(self):
+        dim = self._states.shape[1]
+        self._innovation_covariances = self._measurement_noise + \
+                                       self._measurement_model @ self._covariances @ self._measurement_model.T
+        self._inv_innovation_covariances = np.linalg.inv(self._innovation_covariances)
+        self._kalman_gains = self._covariances @ self._measurement_model.T @ self._inv_innovation_covariances
+        self._covariances = (np.eye(dim) - self._kalman_gains @ self._measurement_model) @ self._covariances
 
-        innovation_covariance = self._measurement_noise +\
-                                self._measurement_model @ self.covariances @ self._measurement_model.T
-        inv_innovation_covariances = np.linalg.inv(innovation_covariance)
-        kalman_gain = self.covariances @ self._measurement_model.T @ inv_innovation_covariances
-        return innovation_covariance, inv_innovation_covariances, kalman_gain
-
-    def pure_update(self, innovation, kalman_gain):
-        dim = self.states.shape[1]
-        self.states = self.states + np.squeeze(innovation[:, np.newaxis] @ np.transpose(kalman_gain, (0, 2, 1)))
-        self.covariances = (np.eye(dim) - kalman_gain @ self._measurement_model) @ self.covariances
+    def pure_update(self):
+        self._states = self._states[:, np.newaxis, :] + self._innovation @ np.transpose(self._kalman_gains, (0, 2, 1))
+        self._states = np.concatenate(self._states[:])
