@@ -65,5 +65,5 @@ class EKF(Kalman):
         self._covariances = (np.eye(dim) - self._kalman_gains @ jacobis) @ self._covariances
 
     def pure_update(self):
-        self._states = self._states + self._innovation @ np.transpose(self._kalman_gains, (0, 2, 1))
+        self._states = self._states[:, np.newaxis, :] + self._innovation @ np.transpose(self._kalman_gains, (0, 2, 1))
         self._states = np.concatenate(self._states[:])
