@@ -18,23 +18,24 @@ class UKF(Kalman):
                  covariances=None,
                  innovation=None,
                  innovation_covariances=None,
+                 inv_innovation_covariances=None,
                  kalman_gains=None,
                  ):
-        self._transition_model = transition_model
+        super(UKF, self).__init__(transition_model,
+                                 transition_noise,
+                                 measurement_model,
+                                 measurement_noise,
+                                 states,
+                                 covariances,
+                                 innovation,
+                                 innovation_covariances,
+                                 inv_innovation_covariances,
+                                 kalman_gains)
         self._transition_jacobi = transition_jacobi
-        self._transition_noise = transition_noise
-        self._measurement_model = measurement_model
         self._measurement_jacobi = measurement_jacobi
-        self._measurement_noise = measurement_noise
         self._alpha = alpha
         self._beta = beta
         self._ket = ket
-        self._innovation = innovation
-        self._innovation_covariances = innovation_covariances
-        self._kalman_gains = kalman_gains
-        self._states = states
-        self._covariances = covariances
-
         self._predicted_mean_measurement = None
 
     def predict(self):
@@ -102,6 +103,7 @@ class UKF(Kalman):
         kalman_factor = self._outer_sum_product(scaled_sigma_deviation, deviation)
 
         inv_inno = np.linalg.inv(self._innovation_covariances)
+        self._inv_innovation_covariances = inv_inno
         self._kalman_gains = kalman_factor @ inv_inno
 
     def pure_update(self):

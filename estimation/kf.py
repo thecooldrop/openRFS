@@ -15,16 +15,17 @@ class KF(Kalman):
                  innovation_covariances=None,
                  inv_innovation_covariances=None,
                  kalman_gains=None):
-        self._transition_model = transition_model
-        self._transition_noise = transition_noise
-        self._measurement_model = measurement_model
-        self._measurement_noise = measurement_noise
-        self._innovation = innovation
-        self._innovation_covariances = innovation_covariances
-        self._inv_innovation_covariances = inv_innovation_covariances
-        self._kalman_gains = kalman_gains
-        self._states = states
-        self._covariances = covariances
+
+        super(KF, self).__init__(transition_model,
+                                 transition_noise,
+                                 measurement_model,
+                                 measurement_noise,
+                                 states,
+                                 covariances,
+                                 innovation,
+                                 innovation_covariances,
+                                 inv_innovation_covariances,
+                                 kalman_gains)
 
     def predict(self):
         """

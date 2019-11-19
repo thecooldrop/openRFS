@@ -17,18 +17,18 @@ class EKF(Kalman):
                  innovation_covariances=None,
                  inv_innovation_covariances=None,
                  kalman_gains=None):
-        self._transition_model = transition_model
-        self._transition_noise = transition_noise
+        super(EKF, self).__init__(transition_model,
+                                  transition_noise,
+                                  measurement_model,
+                                  measurement_noise,
+                                  states,
+                                  covariances,
+                                  innovation,
+                                  innovation_covariances,
+                                  inv_innovation_covariances,
+                                  kalman_gains)
         self._transition_jacobi = transition_jacobi
-        self._measurement_model = measurement_model
-        self._measurement_noise = measurement_noise
         self._measurement_jacobi = measurement_jacobi
-        self._innovation = innovation
-        self._innovation_covariances = innovation_covariances
-        self._inv_innovation_covariances = inv_innovation_covariances
-        self._kalman_gains = kalman_gains
-        self._states = states
-        self._covariances = covariances
 
     def predict(self):
         """
