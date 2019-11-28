@@ -65,3 +65,7 @@ class Kalman(ABC):
     @covariances.setter
     def covariances(self, value):
         self._covariances = value
+
+    @property
+    def innovation(self):
+        return self._innovation

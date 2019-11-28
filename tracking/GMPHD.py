@@ -110,7 +110,7 @@ class GMPHD:
         new_weights = np.reshape(self._weights.T @ self._spawn_weights, (1, -1))
 
         # compute transition of each state with each of transition matrices
-        transit_states = self._spawn_transition @ self._kalman_filter.states.T
+        transit_states = self._spawn_transition @ self._kalman_filter.state.T
         # for each transition matrix add the corresponding offset vector
         transit_states = self._spawn_offsets[:, :, np.newaxis] + transit_states
         # reorder the axes, so that the second axis becomes the fastest varying and first second fastest varying
@@ -134,13 +134,13 @@ class GMPHD:
     def predict_surviving_components(self):
         new_weights = self._probability_survival * self._weights
         self._kalman_filter.predict()
-        new_states = self._kalman_filter.states
+        new_states = self._kalman_filter.state
         new_covariances = self._kalman_filter.covariances
         return new_weights, new_states, new_covariances
 
     def compute_miss_components(self):
         new_weights = (1 - self._probability_detection) * self._weights
-        states = self._kalman_filter.states
+        states = self._kalman_filter.state
         covariances = self._kalman_filter.covariances
         return new_weights, states, covariances
 
@@ -149,7 +149,6 @@ class GMPHD:
                           states,
                           covariances,
                           measurements):
-
         self._kalman_filter.states = states
         self._kalman_filter.covariances = covariances
         self._kalman_filter.update(measurements)
@@ -166,7 +165,7 @@ class GMPHD:
         inno_dets = np.reshape(np.linalg.det(2 * np.pi * inno_cov), (1, -1))
         innovations = self._kalman_filter.innovation
         exponent = innovations[:, np.newaxis] @ inv_inno_cov @ np.transpose(innovations[:, np.newaxis],
-                                                                                     (0, 2, 1))
+                                                                            (0, 2, 1))
         exponent = np.reshape(exponent, (1, -1))
         gaussians = (inno_dets ^ (-1 / 2)) * np.exp((-1 / 2) * exponent)
 
@@ -179,3 +178,74 @@ class GMPHD:
         updated_weights = np.reshape(l_up_weights, (1, -1))
 
         return updated_weights, updated_states, updated_covariances
+
+    def merge(self, treshold, cap):
+        copy_weights = self._weights
+        copy_states = self._kalman_filter.state
+        copy_covs = self._kalman_filter.covariances
+
+        cap_indices = (copy_weights > cap)
+        copy_weights = copy_weights[cap_indices]
+        copy_states = copy_states[cap_indices, :]
+        copy_covs = copy_covs[cap_indices, :, :]
+
+        new_weights = []
+        new_states = []
+        new_covs = []
+
+        indices = np.arange(max(copy_weights.shape))
+        while not indices.size == 0:
+            # j index from paper
+            max_weight_index = np.argmax(copy_weights)
+            curr_state = copy_states[max_weight_index, :]
+            curr_cov = copy_covs[max_weight_index, :, :]
+
+            index_states = copy_states[indices, :]
+            diff_states = index_states - curr_state
+            inv_cov = np.linalg.inv(curr_cov)
+            # fast mahalanobis distance computation for many states
+            right_product = inv_cov @ diff_states.T
+            left_product = diff_states * right_product
+            distances = np.sum(left_product, axis=0)
+            # elements to keep for next iteration
+            keep_mask = distances >= treshold
+            # elements to merge in this iteration
+            merge_mask = distances < treshold
+
+            merge_weights = copy_weights[:, merge_mask]
+            merge_states = copy_states[merge_mask, :]
+            merge_covariances = copy_covs[merge_mask, :, :]
+
+            sum_weight = np.sum(merge_weights)
+            weighted_states = np.reshape(merge_weights, (-1, 1)) * merge_states
+            mean_state = np.sum(weighted_states, axis=0) / sum_weight
+
+            diff_states = mean_state - merge_states
+            # broadcast to compute outer product of each row with itself
+            diff_states = diff_states[:, np.newaxis, :]
+            outer_product = np.transpose(diff_states, (0, 2, 1)) @ diff_states
+            sum_covariances = merge_covariances + outer_product
+            weighted_covariances = merge_weights.T[:, :, np.newaxis] * sum_covariances
+            mean_covariance = weighted_covariances / sum_weight
+
+            copy_weights = copy_weights[:, keep_mask]
+            copy_states = copy_states[keep_mask, :]
+            copy_covs = copy_covs[keep_mask, :]
+            indices = indices[keep_mask]
+
+            new_weights.append(sum_weight)
+            new_states.append(mean_state)
+            new_covs.append(mean_covariance)
+
+        self._weights = np.array(new_weights).reshape((1, -1))
+        self._kalman_filter.state = np.array(new_states)
+        self._kalman_filter.covariances = np.array(new_covs)
+
+    def cap(self, num):
+        num_comps = max(self._weights.shape)
+        if num_comps >= num:
+            sort_indices = np.argsort(self._weights)
+            top_num = sort_indices[0 : num]
+            self._weights = self._weights[0 : top_num]
+            self._kalman_filter.state = self._kalman_filter.state[0:top_num, :]
+            self._kalman_filter.covariances = self._kalman_filter.covariances[0:top_num, :, :]
