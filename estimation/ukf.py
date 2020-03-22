@@ -22,15 +22,15 @@ class UKF(Kalman):
                  kalman_gains=None,
                  ):
         super(UKF, self).__init__(transition_model,
-                                 transition_noise,
-                                 measurement_model,
-                                 measurement_noise,
-                                 states,
-                                 covariances,
-                                 innovation,
-                                 innovation_covariances,
-                                 inv_innovation_covariances,
-                                 kalman_gains)
+                                  transition_noise,
+                                  measurement_model,
+                                  measurement_noise,
+                                  states,
+                                  covariances,
+                                  innovation,
+                                  innovation_covariances,
+                                  inv_innovation_covariances,
+                                  kalman_gains)
         self._transition_jacobi = transition_jacobi
         self._measurement_jacobi = measurement_jacobi
         self._alpha = alpha
@@ -39,6 +39,10 @@ class UKF(Kalman):
         self._predicted_mean_measurement = None
 
     def predict(self):
+        """
+        Computes the UKF prediction step for non-linear motion model.
+        :return: none
+        """
         dim = self._states.shape[1]
         lmbd = self._alpha ** 2 * (dim + self._ket) - dim
 
@@ -64,15 +68,46 @@ class UKF(Kalman):
         self._covariances = self._outer_sum_product(scaled_deviation, deviation) + self._transition_noise
 
     def update(self, measurements):
+        """
+        Computes the UKF update of each state with each measurement
+
+        If before the method there were 10x4 states and measurements are 5x3 then after executing this method following
+        matrices are stored:
+            - _innovation = 10x5x3 where first dimension is indexed by old state and second by measurement, where
+            objects under consideration are rows
+
+            - _innovation_covariances = 10x3x3 where the first dimension is indexed by old state and the objects of
+            interest are 3x3 matrices
+
+            - _inv_innovation_covarainces = 10x3x3 where the first dimension is indexed by old state and objects of
+            interest are 3x3 matrices
+
+            - _kalman_gains = 10x4x3, where the first dimension is indexed by old state and objects of interest are
+            4x3 matrices
+
+            - _covariances = 50x4x4 where the first dimension is indexed by new state. The order of elements in this
+            matrix is such that first five 4x4 matrices represent the results of updating the first old state with
+            each of five measurements, and so on.
+
+            - _states = 50x4 where the first dimension is indexed by new state. The order of elements in this matrix
+            is such that first five rows are states which result from updating the first state with all of five
+            measurements
+
+            - _innovation = 10x5x3 where the first dimension is indexed by old state and second by measurement. This
+            means that first 5x3 matrix contains the rows which result from subtracting each of measurements from the
+            first old state and so on.
+        :param measurements:
+        :return:
+        """
         num_meas = measurements.shape[0]
         self.compute_update_matrices()
         # compute the difference between each measurement and each predicted mean measurement
         # and transpose so that n-th entry along first dimension of self._innovation contains the
         # difference all of measurements and the n-th state
-        self._innovation = measurements[:, np.newaxis] - self._predicted_mean_measurement
+        self._innovation = measurements[:, np.newaxis, :] - self._predicted_mean_measurement
         self._innovation = np.transpose(self._innovation, (1, 0, 2))
         self.pure_update()
-        self._innovation_covariances = np.repeat(self._innovation_covariances, num_meas, axis=0)
+        self._covariances = np.repeat(self._covariances, num_meas, axis=0)
 
     def compute_update_matrices(self):
         dim = self._states.shape[1]
@@ -116,6 +151,13 @@ class UKF(Kalman):
                                                                                              (0, 2, 1))
 
     def _compute_sigma_weights(self, lmbd, n):
+        """
+        Computes the weights which are used for predicting the state.
+        :param lmbd: UKF parameter
+        :param n: dimensionality of state vector
+        :return: c_weights is a 1-D vector of length (2n+1)
+        :return: m_weights is a 1-D vector of length (2n+1)
+        """
         weight: float = lmbd / (n + lmbd)
         m_weights = np.repeat(weight, 2 * n + 1)
         c_weights = np.repeat(weight, 2 * n + 1)
@@ -125,7 +167,15 @@ class UKF(Kalman):
         return c_weights, m_weights
 
     def _compute_sigma_points(self, lmbd, n):
+        """
+        Computes the sigma points for states and covariances.
 
+        Given that states and covariances have shapes 10x4 and 10x4x4 respectively the resulting sigma points has
+        dimension of 10x9x4. Here each 9x4 matrix represents the sigma points of each respective state
+        :param lmbd: The paramater of UKF filter
+        :param n: Dimensionality of state vector
+        :return: Sigma points of each state of shape lx(2n+1)xn where l is number of states available from previous step
+        """
         root_covariances = np.linalg.cholesky((lmbd + n) * self._covariances)
         # To each state we compute a matrix of sigma points
         sig_first = self._states[:, np.newaxis] + np.transpose(root_covariances, (0, 2, 1))
@@ -136,6 +186,8 @@ class UKF(Kalman):
     def _outer_sum_product(self, fst, snd):
         """
         Computes the sum of outer products between rows of first and second argument
+
+        If fst has dimension mxn and snd has dimension mxp then output has
         """
         # arrange the rows of A into columns of expanded matrix
         expanded_a = np.expand_dims(fst, axis=-1)

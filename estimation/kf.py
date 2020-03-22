@@ -43,6 +43,34 @@ class KF(Kalman):
 
     def update(self, measurements):
         """
+        Computes the update of each state with each measurement.
+
+        If before the method there were 10x4 states and measurements are 5x3 then after executing this method following
+        matrices are stored:
+            - _innovation = 10x5x3 where first dimension is indexed by old state and second by measurement, where
+            objects under consideration are rows
+
+            - _innovation_covariances = 10x3x3 where the first dimension is indexed by old state and the objects of
+            interest are 3x3 matrices
+
+            - _inv_innovation_covarainces = 10x3x3 where the first dimension is indexed by old state and objects of
+            interest are 3x3 matrices
+
+            - _kalman_gains = 10x4x3, where the first dimension is indexed by old state and objects of interest are
+            4x3 matrices
+
+            - _covariances = 50x4x4 where the first dimension is indexed by new state. The order of elements in this
+            matrix is such that first five 4x4 matrices represent the results of updating the first old state with
+            each of five measurements, and so on.
+
+            - _states = 50x4 where the first dimension is indexed by new state. The order of elements in this matrix
+            is such that first five rows are states which result from updating the first state with all of five
+            measurements
+
+            - _innovation = 10x5x3 where the first dimension is indexed by old state and second by measurement. This
+            means that first 5x3 matrix contains the rows which result from subtracting each of measurements from the
+            first old state and so on.
+
         :param measurements: Numpy array for storing measurements, where each row is treated as a measurement.
 
         :return: Returns updated states and covariance matrices
