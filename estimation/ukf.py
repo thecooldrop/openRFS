@@ -20,7 +20,7 @@ class UKF(Kalman):
                  innovation_covariances=None,
                  inv_innovation_covariances=None,
                  kalman_gains=None,
-                 ):
+                 expected_measurements=None):
         super(UKF, self).__init__(transition_model,
                                   transition_noise,
                                   measurement_model,
@@ -30,7 +30,9 @@ class UKF(Kalman):
                                   innovation,
                                   innovation_covariances,
                                   inv_innovation_covariances,
-                                  kalman_gains)
+                                  kalman_gains,
+                                  expected_measurements)
+
         self._transition_jacobi = transition_jacobi
         self._measurement_jacobi = measurement_jacobi
         self._alpha = alpha
@@ -126,7 +128,7 @@ class UKF(Kalman):
         # This computes the predicted mean measurement for each state.
         # n-th row contains the predicted mean measurement for n-th predicted state
         self._predicted_mean_measurement = np.sum(m_weights[:, np.newaxis] * expected_measurements, axis=1)
-
+        self.expected_measurements = self._predicted_mean_measurement
         # subtract the predicted mean measurement from measurement sigma points for matching state
         deviation = expected_measurements - self._predicted_mean_measurement[:, np.newaxis]
         scaled_deviation = c_weights[:, np.newaxis] * deviation

@@ -14,7 +14,8 @@ class KF(Kalman):
                  innovation=None,
                  innovation_covariances=None,
                  inv_innovation_covariances=None,
-                 kalman_gains=None):
+                 kalman_gains=None,
+                 expected_measurements=None):
 
         super(KF, self).__init__(transition_model,
                                  transition_noise,
@@ -25,7 +26,8 @@ class KF(Kalman):
                                  innovation,
                                  innovation_covariances,
                                  inv_innovation_covariances,
-                                 kalman_gains)
+                                 kalman_gains,
+                                 expected_measurements)
 
     def predict(self):
         """
@@ -76,7 +78,8 @@ class KF(Kalman):
         :return: Returns updated states and covariance matrices
         """
         num_meas = measurements.shape[0]
-        self._innovation = measurements[:, np.newaxis, :] - self._states @ self._measurement_model.T
+        self.expected_measurements = self._states @ self._measurement_model.T
+        self._innovation = measurements[:, np.newaxis, :] - self.expected_measurements
         self._innovation = np.transpose(self._innovation, (1, 0, 2))
         self.compute_update_matrices()
         self._covariances = np.repeat(self._covariances, num_meas, axis=0)
