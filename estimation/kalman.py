@@ -14,7 +14,8 @@ class Kalman(ABC):
                  innovation=None,
                  innovation_covariances=None,
                  inv_innovation_covariances=None,
-                 kalman_gains=None):
+                 kalman_gains=None,
+                 expected_measurements=None):
         self._transition_model = transition_model
         self._transition_noise = transition_noise
         self._measurement_model = measurement_model
@@ -25,6 +26,7 @@ class Kalman(ABC):
         self._kalman_gains = kalman_gains
         self._states = states
         self._covariances = covariances
+        self.expected_measurements = expected_measurements
 
     @abstractmethod
     def predict(self):

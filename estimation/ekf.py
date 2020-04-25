@@ -16,7 +16,8 @@ class EKF(Kalman):
                  innovation=None,
                  innovation_covariances=None,
                  inv_innovation_covariances=None,
-                 kalman_gains=None):
+                 kalman_gains=None,
+                 expected_measurements=None):
         super(EKF, self).__init__(transition_model,
                                   transition_noise,
                                   measurement_model,
@@ -26,7 +27,8 @@ class EKF(Kalman):
                                   innovation,
                                   innovation_covariances,
                                   inv_innovation_covariances,
-                                  kalman_gains)
+                                  kalman_gains,
+                                  expected_measurements)
         self._transition_jacobi = transition_jacobi
         self._measurement_jacobi = measurement_jacobi
 
@@ -74,8 +76,8 @@ class EKF(Kalman):
         """
         # ensure states is in row form
         num_meas = measurements.shape[0]
-        expected_measurements = self._measurement_model(self._states)
-        self._innovation = measurements[:, np.newaxis, :] - expected_measurements
+        self.expected_measurements = self._measurement_model(self._states)
+        self._innovation = measurements[:, np.newaxis, :] - self.expected_measurements
         self._innovation = np.transpose(self._innovation, (1, 0, 2))
         self.compute_update_matrices()
         self._covariances = np.repeat(self._innovation_covariances, num_meas, axis=0)
