@@ -71,29 +71,34 @@ class GaussianMixtureMixin():
 
             # compute the mahalanobis distance between current mean
             # and all other means
-            distances = np.sqrt(self._means @ current_cov @ current_mean.T)
+            diff = self._means - current_mean
+            distances = np.sqrt(np.sum(diff.T * (current_cov @ diff.T), axis=0))
             take_mask = distances < distance
-            take_weights = np.reshape(self._weights[:, take_mask], (-1, 1))
+            selected_weights = self._weights[:, take_mask]
+            selected_states = self._means[take_mask, :]
+            selected_covariances = self._covariances[take_mask, :, :]
 
-            new_weight = np.sum(take_weights)
-            new_state = (1 / new_weight) * np.sum(take_weights * self._means, axis=0)
+            new_weight = np.sum(selected_weights, axis=1)
+            new_state = (1 / new_weight) * np.sum(selected_weights.T * selected_states, axis=0)
 
-            diff = new_state - self._means
-            add_cov = self._covariances + diff[:, :, np.newaxis] @ diff[:, np.newaxis, :]
-            new_covariance = (1 / new_weight) * np.sum(take_weights[:, np.newaxis, :] * add_cov, axis=0)
+            diff = new_state - selected_states
+            add_cov = selected_covariances + diff[:, :, np.newaxis] @ diff[:, np.newaxis, :]
+            new_covariance = (1 / new_weight) * np.sum((selected_weights.T)[:, np.newaxis] * add_cov, axis=0)
 
-            del_indices = np.arange(take_mask.size)[take_mask]
-            np.delete(indices, del_indices)
-            np.delete(self._weights, del_indices, axis=1)
-            np.delete(self._means, del_indices, axis=0)
-            np.delete(self._covariances, del_indices, axis=0)
+            iter_mask = ~take_mask
+            indices = np.arange(indices[~take_mask].size)
+            self._weights = self._weights[:, iter_mask]
+            self._means = self._means[iter_mask, :]
+            self._covariances = self._covariances[iter_mask, :, :]
+
             new_weights.append(new_weight)
             new_means.append(new_state)
             new_covariances.append(new_covariance)
 
-        self._weights = np.asarray(new_weights)
+        self._weights = np.reshape(np.asarray(new_weights), (1, -1))
         self._means = np.asarray(new_means)
         self._covariances = np.asarray(new_covariances)
+
 
     def cap(self, number):
         """
@@ -112,9 +117,9 @@ class GaussianMixtureMixin():
         if number > self._weights.size:
             return
 
-        descending_sorting_indices = np.squezze(np.sort(-self._weights))
+        descending_sorting_indices = np.squeeze(np.argsort(-self._weights))
         descending_weights = self._weights[:, descending_sorting_indices]
-        descending_means = self._weights[descending_sorting_indices, :]
+        descending_means = self._means[descending_sorting_indices, :]
         descending_covariances = self._covariances[descending_sorting_indices, :, :]
         self._weights = descending_weights[:, 0:number]
         self._means = descending_means[0:number, :]
