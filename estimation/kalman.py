@@ -5,6 +5,7 @@ Kalman abstract base class.
 
 from abc import ABC, abstractmethod
 from numbers import Number
+import numpy as np
 
 
 class Kalman(ABC):
@@ -353,8 +354,8 @@ class KF(Kalman):
         """
         num_meas = measurements.shape[0]
         self._expected_measurements = self._states @ self._measurement_model.T
-        self._innovation = measurements[:, np.newaxis, :] - self.expected_measurements
-        self._innovation = np.transpose(self._innovation, (1, 0, 2))
+        self._innovations = measurements[:, np.newaxis, :] - self.expected_measurements
+        self._innovations = np.transpose(self._innovations, (1, 0, 2))
         self.compute_update_matrices()
         self._covariances = np.repeat(self._covariances, num_meas, axis=0)
         self.pure_update()
@@ -368,7 +369,7 @@ class KF(Kalman):
         self._covariances = (np.eye(dim) - self._kalman_gains @ self._measurement_model) @ self._covariances
 
     def pure_update(self):
-        self._states = self._states[:, np.newaxis, :] + self._innovation @ np.transpose(self._kalman_gains, (0, 2, 1))
+        self._states = self._states[:, np.newaxis, :] + self._innovations @ np.transpose(self._kalman_gains, (0, 2, 1))
         if self._states.size > 0:
             self._states = np.concatenate(self._states[:])
         else:
