@@ -1,251 +1,434 @@
+"""
+This module contains the implementation of Gaussian Mixture Probability Hypothesis Density Filter as outlined described
+in the paper by Ba-Ngu-Vo:
+
+B.-N. Vo, and W. K. Ma, "The Gaussian mixture Probability Hypothesis Density Filter,"
+IEEE Trans Signal Processing, Vol. 54, No. 11, pp. 4091-4104, 2006
+"""
+
 import numpy as np
-from estimation.kf import Kalman
+
+from estimation.kalman import Kalman
+from util.mixins import GaussianMixtureMixin
+from numbers import Number
 
 
-class GMPHD:
+class GMPHD(GaussianMixtureMixin):
+    """
+    This class represents an instance of GMPHD filter. The class is meant to be instantiated with the Builder class
+    provided as inner class. The formal description of the algorithm implemented here in pseudocode can be found in
+    paper cited in the module documentation.
+
+    This class is meant to be used iteratively by calling the process() method of the instance. The results of
+    computations can be obtained after each call by calling the get_components() method of the class. As an example
+    assume that measurements is already initialized to some valid input:
+    >>> measurements = ...
+    >>> gmphd_filter_instance = ...
+    >>> gmphd_filter_instace.process(measurements)
+    >>> weights, means, covariances = gmphd_filter_instance.get_components()
+
+    """
+
+    class Builder:
+        """
+        This is an inner builder class for instance of GMPHD filter. Purpose of this class is to make it easier to
+        create instances of GMPHD filter and to document the relationships between variables in code and those in
+        paper.
+
+        The class should first be instantiated before the first use. After an instance of the class is created
+        we can call the method to set the parameters of GMPHD filter, and after all paramters have been set an instance
+        of GMPHD filter can be obtained by using the build() method.
+
+        Each of the parameter-setting methods returns the instance of the class back, so that the class can either be
+        used like regular class, or like a class with fluent interface. The classical usage would be:
+
+        >>> gmphd_builder = GMPHD.Builder()
+        >>> gmphd_builder = gmphd_builder.with_birth_covariances(birth_covariances)
+        >>> gmphd_builder = gmphd_builder.with_birth_means(birth_means)
+        >>> ...
+        >>> gmphd_filter = gmphd_builder.build()
+
+        On the other hand fluent interface would be something like:
+
+        >>> gmphd_filter = GMPHD.Builder().with_birth_weights(birth_weights) \
+                                          .with_birth_means(birth_states) \
+                                          .with_birth_covariances(birth_covariances) \
+                                          .with_probability_of_detection(p_det) \
+                                          .with_probability_of_survival(p_surv) \
+                                          .with_clutter_density(clutter_num) \
+                                          .with_kalman_filter(kalman_filter) \
+                                          .build()
+
+        Note that the parameter-setting methods only check the passed in paremeters one by one, as the methods are
+        called. The final check of compatibility of parameter values is done in build() method, which then either
+        returns the built GMPHD filter or raises an error describing the parameters whose values are incompatible.
+
+        """
+        def __init__(self):
+            self._weights = None
+            self._means = None
+            self._covariances = None
+            self._birth_weights = None
+            self._birth_means = None
+            self._birth_covariances = None
+            self._probability_detection = None
+            self._probability_survival = None
+            self._clutter_density = None
+            self._kalman_filter = None
+
+        def with_weights(self, weights):
+            """
+            Initializes the weights of Gaussian mixture density. The weights are numeric values representing the
+            number of targets present for matching mean and covariance. The paper cited in module documentation
+            denotes the weights with lowercase "w" with subscripts and superscripts.
+
+            Note that the number of weights components should be equal to number of means and covariances given.
+            Lastly it is expected that weights are given as a numpy array of numeric values
+            :param weights: (1,n) numpy array of numeric
+            :return: the builder instance
+            """
+            self._weights = weights
+            return self
+
+        def with_means(self, means):
+            """
+            Initializes the means of Gaussian components for the Gaussian mixture model. The means represent the actual
+            mean values of Gaussian mixture components. The paper cited in module documentation denotes these means
+            by lowercase "m" with subscripts and superscripts, and uses these variables in summations representing the
+            Gaussian mixtures. For examples of usage of this variable in the algorithm refer to equations (23) and (31)
+
+            Note that the number of mean components needs to be equal to both the number of weights and covariance
+            components.
+
+            Lastly it is expected that means be given as an numpy array, where each row represents a single mean vector.
+            :param means: (m,n)-shaped numpy array, where n is the dimension of the mean
+            :return: the current builder
+            """
+            self._means = means
+            return self
+
+        def with_covariances(self, covariances):
+            """
+            Initializes the covariances of the Gaussian components for the Gaussian mixture model. The covariances are
+            the covariances of Gaussian mixture components. The paper cited in module documentation denotes these
+            covariances with uppercase letter "P" with subscripts and superscripts, and uses these variables in
+            summations representing the Gaussian mixtures. For examples of usage of this variable in the algorithm refer
+            to equations (23) and (31) in the cited paper.
+
+            Note that the number of covariance components needs to be equal to both the number of weights and covariance
+            components.
+
+            Lastly it is expected that the covariances be gives as a 3D numpy array, where entries along first dimension
+            represent the covariance matrices
+            :param covariances: (m, n, n)-shaped numpy array where the covariances are (n, n) shaped entries along first
+                   axis
+            :return: the current builder
+            """
+            self._covariances = covariances
+            return self
+
+        def with_birth_weights(self, birth_weights):
+            """
+            Initializes the weights of birth Gaussian mixture. The birth Gaussian mixture represents the expected
+            born targets. The weights of this mixture represent the number of targets expected to be born with
+            associated mean and covariance.
+
+            In the paper the birth density is given lowercase greek gamma as can be seen in the equation (21) in the
+            paper cited in the module documentation.
+
+            The number of weights given should be equal to the number of birth means and birth covariances. Note that
+            the birth weights should be given by numeric values. It is expected that these numeric values be given as
+            numpy array.
+
+            :param birth_weights: (1, n)-shaped numpy array of floating point numbers
+            :return: the current builder
+            """
+            if birth_weights is None:
+                raise ValueError("The birth weights of the GMPHD filter can not be None")
+            else:
+                self._birth_weights = birth_weights
+            return self
+
+        def with_birth_means(self, birth_means):
+            """
+            Initializes the means of the birth Gaussian mixture. These variables are denoted by lowercase "m" in the
+            Gaussian birth mixture in the equation (21) in the cited paper.
+
+            It is expected that birth means be arranged in an numpy array. Each row in the input array is expected to
+            represent a single mean.
+
+            :param birth_means: (m, n)-shaped numpy array
+            :return: the current builder
+            """
+            if birth_means is None:
+                raise ValueError("The birth states of the GMPHD filter can not be None")
+            else:
+                self._birth_means = birth_means
+            return self
+
+        def with_birth_covariances(self, birth_covariances):
+            """
+            Initializes the covariances of the birth Gaussian mixture. These variables are denoted by uppercase "P" in
+            the Gaussian birth mixture in the equation (21) in the cited paper.
+
+            It is expected that the birth covariance be arranged in a 3D numpy array. Each entry along the first axis
+            is expected represent a single 2D covariance matrix.
+
+            :param birth_covariances: (m, n, n)-shaped numpy array
+            :return: the current builder instance
+            """
+            if birth_covariances is None:
+                raise ValueError("The birth covariances of the GMPHD filter can not be None")
+            else:
+                self._birth_covariances = birth_covariances
+            return self
+
+        def with_probability_of_survival(self, probability_survival):
+            """
+            Initializes the probability that a single target remains present in the field of view between two
+            measurements. This probability of survival is denoted by "p_s,k" ( lowercase p with "s,k" in the subscript )
+            in the paper cited in module documentation. This variable is defined in equation (19) in the cited paper.
+
+            This variable can take on values in interval [0,1]. The value 0 would mean that every observed target
+            is not observable in the successive measurement because it escaped the field of view. On the other hand
+            the value 1 would mean that every observed target is certain to remain within the field of view of the
+            sensor in successive time interval.
+
+            :param probability_survival: a numeric value in [0, 1] interval
+            :return: the current builder
+            """
+            if not isinstance(probability_survival, Number):
+                raise TypeError("The probability of detection for GMPHD filter has to be a number")
+            if probability_survival is None:
+                raise ValueError("The probability of detection for GMPHD filter can not be None")
+            if probability_survival < 0 or probability_survival > 1:
+                raise ValueError("The probability of survival for GMPHD filter has to be a value in [0, 1] interval")
+            else:
+                self._probability_survival = probability_survival
+            return self
+
+        def with_probability_of_detection(self, probability_detection):
+            """
+            Initializes the probability of detection for the filter. This variable denotes the probability that a target
+            will cause a detection in the sensor, given that the target is present in the sensors field of view. In the
+            cited paper this variable is denoted by "p_D,k" ( lowercase "p" with "D,k" in subscript ), and is defined
+            in the equation (20) in the cited paper.
+
+            This variable can take on values in interval [0, 1], where 0 would mean that targets present in the sensors
+            field of view never cause any detections, while 1 would mean that every target present in the sensors field
+            of view always causes a detection in the sensor.
+            :param probability_detection: a numeric value in the [0, 1] interval
+            :return: the current builder instance
+            """
+            if not isinstance(probability_detection, Number):
+                raise TypeError("The probability of detection for GMPHD filter has to be a number")
+            if probability_detection is None:
+                raise ValueError("The probability of detection for GMPHD filter can not be None")
+            if probability_detection < 0 or probability_detection > 1:
+                raise ValueError("The probability of detection for GMPHD filter has to be a value in [0, 1] interval")
+            else:
+                self._probability_detection = probability_detection
+            return self
+
+        def with_clutter_density(self, clutter_density):
+            """
+            Initializes the clutter density for the GMPHD filter. This variable represents the average expected number
+            of false positive measurements in each set of detections. Assume that that our sensor is a camera with
+            pre-processing algorithm extracting the bounding boxes around pedestrians. If this sensor, on average,
+            returns two extra bounding boxes which do not represent pedestrians then the clutter density would be 2.
+
+            The value of this parameter should be set to ratio of expected number of false positive measurements to the
+            volume of the measurement space. To illustrate how to compute this value assume we are still working with
+            the camera sensor from above. Assume that that detections of camera consist of 4D vectors containing the
+            [x, y, width, height] of bounding box. Further assume that for each detection 0 <= x <= 1920, 0<= y <= 1080
+            , 0 <= width <= 400 and height 0 <= height <= 400. Under these assumptions the proper clutter density
+            would be equal to (expected number of false positives ) / (1920*1080*400*400), where the divisor is
+            the volume of observation space.
+
+            In the cited paper this variable is denoted by lowercase lambda with "c" in subscript as can be seen in the
+            equation (47).
+
+            :param clutter_density: a positive numeric value
+            :return: the current builder
+            """
+            if not isinstance(clutter_density, Number):
+                raise TypeError("The clutter density for GMPHD filter has to be a number")
+            if clutter_density is None:
+                raise ValueError("The clutter density for GMPHD filter can not be None")
+            if clutter_density < 0:
+                raise ValueError("The clutter density for GMPHD filter has to be non-negative")
+            else:
+                self._clutter_density = clutter_density
+            return self
+
+        def with_kalman_filter(self, kalman):
+            """
+            Instantiates a Kalman filter for GMPHD filter.
+            :param kalman: An object of type Kalman is expected
+            :return: the current builder
+            """
+            if not isinstance(kalman, Kalman):
+                raise TypeError("The Kalman Filter for GMPHD filter has to be an instance of estimation.Kalman")
+            if kalman is None:
+                raise ValueError("The Kalman filter for GMPHD filter can not be None")
+            else:
+                self._kalman_filter = kalman
+            return self
+
+        def build(self):
+            """
+            Builds an instance of GMPHD filter from the set values.
+
+            Besides building an instance of GMPHD filter this method also checks that the values set for the builder
+            are compatible. Following checks are done:
+
+            - birth_weights, birth_means and birth_covariances are not None
+            - number of birth weighs, means and covariances are all equal
+            - probability of detection is not None
+            - probability of survival is not None
+            - clutter density is not None
+            - Kalman filter is not None
+
+            :return: an instace of GMPHD filter
+            """
+            if self._birth_weights is None:
+                raise ValueError("The birth weights for GMPHD filter can not be None")
+            if self._birth_means is None:
+                raise ValueError("The birth means for GMPHD filter can not be None")
+            if self._birth_covariances is None:
+                raise ValueError("The birth covariances for GMPHD filter can not be None")
+
+            birth_weights_number = self._birth_weights.shape[1]
+            birth_means_number = self._birth_means.shape[0]
+            birth_covariances_number = self._birth_covariances.shape[0]
+            if not (birth_weights_number == birth_means_number and birth_means_number == birth_covariances_number):
+                raise ValueError("The number of birth weights, birth means and birth covariances have to all be equal")
+
+            # if any of initial parameters are None, then initialize them all to empty arrays of matching size
+            if self._weights is None or self._means is None or self._covariances is None:
+                self._weights = np.zeros((0, 1))
+                self._means = np.zeros((0, self._birth_means.shape[1]))
+                self._covariances = np.zeros((0, self._birth_covariances.shape[1], self._birth_covariances.shape[2]))
+
+            if self._probability_detection is None:
+                raise ValueError("The probability of detection for GMPHD filter can not be None")
+            if self._probability_survival is None:
+                raise ValueError("The probability of survival for GMPHD filter can not be None")
+            if self._clutter_density is None:
+                raise ValueError("The clutter density of GMPHD filter can not be None")
+
+            if self._kalman_filter is None:
+                raise ValueError("The Kalman filter for GMPHD filter can not be None")
+
+            return GMPHD(self._weights,
+                         self._means,
+                         self._covariances,
+                         self._birth_weights,
+                         self._birth_means,
+                         self._birth_covariances,
+                         self._probability_detection,
+                         self._probability_survival,
+                         self._clutter_density,
+                         self._kalman_filter)
 
     def __init__(self,
                  weights,
-                 states,
+                 means,
                  covariances,
                  birth_weights,
-                 birth_states,
+                 birth_means,
                  birth_covariances,
-                 spawn_weights,
-                 spawn_offsets,
-                 spawn_covariances,
-                 spawn_transition,
-                 kalman_filter,
                  probability_detection,
                  probability_survival,
-                 clutter_lambda,
-                 clutter_density):
-        """
-         Computes complete process of GMPHD filter as described in paper by Ba-Ngu Vo
-         Parameters:
-         -----------
-         weights: np.ndarray
-                 Prior weights specified as a row vector
-         states: np.ndarray
-                 Prior states specified as two dimensional np.ndarray, where each row represents a prior state
-         covariance: np.ndarray
-                 Prior covariances specified as three dimensional np.ndarray, where each entry in first dimension is a
-                 covariance matrix for matching state
-         birth_weights: np.ndarray
-                 Weights for birth components given as a row vector
-         birth_states: np.ndarray
-                 Birth states specified as two dimensional np.ndarray, where each row represents a birth state
-         birth_covariances: np.ndarray
-                 Covariances of birth states specified as three dimensional np.ndarray, where each entry in first
-                 dimension is a covariance matrix for matching birth state
-         spawn_weights: np.ndarray
-                 Weights of spawn components specified as a row vector
-         spawn_offsets: np.ndarray
-                 A two dimensional np.ndarray of offsets relative to state, where spawn components are born. Each row is
-                 considered an offset vector.
-         spawn_covariances: np.ndarray
-                 Covariance matrices for spawn components specified as three dimensional np.ndarray.
-         spawn_transition: np.ndarray
-                 A three dimensional np.ndarray of transition matrices. Each entry along first dimension is considered a
-                 transition matrix.
-         probability_detection: float
-                 A numeric value between 0 and 1, used to specify a probability that a state is measured
-         probability_survival: float
-                 A numeric value between 0 and 1, used to specify that target will continue to exist between two
-                 measurements
-         clutter_lambda: float
-                 A positive numeric value specifying the number of expected false alarm measurements in current
-                 time-step
-         clutter_density: float
-                 Inverse of the volume of the subset of measurement space observed by sensor, since the false alarm
-                 density is modeled as uniform distributed over this subset.
-         """
+                 clutter_density,
+                 kalman_filter):
 
+        super(GMPHD, self).__init__()
         self._weights = weights
+        self._means = means
+        self._covariances = covariances
         self._birth_weights = birth_weights
-        self._birth_states = birth_states
+        self._birth_means = birth_means
         self._birth_covariances = birth_covariances
-        self._spawn_weights = spawn_weights
-        self._spawn_offsets = spawn_offsets
-        self._spawn_covariances = spawn_covariances
-        self._spawn_transition = spawn_transition
         self._probability_detection = probability_detection
         self._probability_survival = probability_survival
-        self._clutter_lambda = clutter_lambda
         self._clutter_density = clutter_density
+        self._kalman_filter = kalman_filter
 
-        self._kalman_filter: Kalman = kalman_filter
-        self._kalman_filter.states = states
-        self._kalman_filter.covariances = covariances
+    def process(self, measurements):
+        if self._weights.size > 0:
+            self._kalman_filter.states = self._means
+            self._kalman_filter.covariances = self._covariances
+        else:
+            self._kalman_filter.states = np.zeros((0, self._birth_means.shape[1]))
+            self._kalman_filter.covariances = np.zeros((0, self._birth_covariances.shape[1], self._birth_covariances.shape[2]))
+        predicted_weights, predicted_means, predicted_covariances = self._predict_existing_components()
 
-    def process(self,
-                measurements):
-        new_spawn_weights, new_spawn_states, new_spawn_covs = self.compute_spawn_components()
+        if predicted_weights.size > 0:
+            predicted_weights = np.concatenate([self._birth_weights, predicted_weights], axis=1)
+            predicted_means = np.concatenate([self._birth_means, predicted_means], axis=0)
+            predicted_covariances = np.concatenate([self._birth_covariances, predicted_covariances], axis=0)
+        else:
+            predicted_weights = self._birth_weights
+            predicted_means = self._birth_means
+            predicted_covariances = self._birth_covariances
 
-        # here internal state of PHD filter changes
-        prediction_weights, prediction_states, prediction_covariances = self.predict_surviving_components()
+        self._kalman_filter.states = predicted_means
+        self._kalman_filter.covariances = predicted_covariances
+        update_means, update_covariances = self._update_components(measurements)
 
-        prediction_weights = np.concatenate((prediction_weights, self._birth_weights, new_spawn_weights), axis=1)
-        prediction_states = np.concatenate((prediction_states, self._birth_states, new_spawn_states), axis=0)
-        prediction_covariances = np.concatenate((prediction_covariances, self._birth_covariances, new_spawn_covs),
-                                                axis=0)
+        miss_weights, miss_means, miss_covariances = self._miss_components(predicted_weights,
+                                                                           predicted_means,
+                                                                           predicted_covariances)
 
-        miss_weights, miss_states, miss_covariances = self.compute_miss_components()
+        q_matrix = self._compute_q_matrix()
+        new_weights = self._update_weights(q_matrix, predicted_weights)
 
-        updated_weights, updated_states, updated_covariances = self.update_components(prediction_weights,
-                                                                                      prediction_states,
-                                                                                      prediction_covariances,
-                                                                                      measurements)
+        self._weights = np.concatenate([miss_weights, new_weights], axis=1)
+        self._means = np.concatenate([miss_means, update_means], axis=0)
+        self._covariances = np.concatenate([miss_covariances, update_covariances], axis=0)
 
-        full_weights = np.concatenate((updated_weights, miss_weights), axis=1)
-        full_states = np.concatenate((updated_states, miss_states), axis=1)
-        full_covariances = np.concatenate((updated_covariances, miss_covariances), axis=0)
-        # Here the internal state of PHD filter changes
-        self._weights = full_weights
-        self._kalman_filter.state = full_states
-        self._kalman_filter.covariances = full_covariances
-
-    def compute_spawn_components(self):
-        # multiply each old weight with each of spawn_weights
-        new_weights = np.reshape(self._weights.T @ self._spawn_weights, (1, -1))
-
-        # compute transition of each state with each of transition matrices
-        transit_states = self._spawn_transition @ self._kalman_filter.state.T
-        # for each transition matrix add the corresponding offset vector
-        transit_states = self._spawn_offsets[:, :, np.newaxis] + transit_states
-        # reorder the axes, so that the second axis becomes the fastest varying and first second fastest varying
-        # goal of this transpose is to make n-th entry along first dimension correspond to transitions from n-th state
-        # and to make the m-th index along second axis be a row of n-th state and m-th state
-        transit_states = np.transpose(transit_states, (2, 0, 1))
-        # reshape the transit_states so that each row represents a state
-        new_states = np.reshape(transit_states, (new_weights.shape[1], -1))
-
-        # compute covariance for each new state and weight
-        transit_covs = self._spawn_covariances[:, np.newaxis] + \
-                       self._spawn_transition @ self._kalman_filter.covariances[:, np.newaxis] @ np.transpose(
-            self._spawn_transition,
-            (0, 2, 1))
-        # reshape the covaraince into old 3D shape
-        cov_shape_x, cov_shape_y = self._kalman_filter.covariances.shape
-        new_covs = np.reshape(transit_covs, (-1, cov_shape_x, cov_shape_y))
-
-        return new_weights, new_states, new_covs
-
-    def predict_surviving_components(self):
-        new_weights = self._probability_survival * self._weights
+    def _predict_existing_components(self):
+        weights = self._probability_survival * self._weights
         self._kalman_filter.predict()
-        new_states = self._kalman_filter.state
-        new_covariances = self._kalman_filter.covariances
-        return new_weights, new_states, new_covariances
+        return weights, self._kalman_filter.states, self._kalman_filter.covariances
 
-    def compute_miss_components(self):
-        new_weights = (1 - self._probability_detection) * self._weights
-        states = self._kalman_filter.state
-        covariances = self._kalman_filter.covariances
-        return new_weights, states, covariances
-
-    def update_components(self,
-                          weights,
-                          states,
-                          covariances,
-                          measurements):
-        self._kalman_filter.states = states
-        self._kalman_filter.covariances = covariances
+    def _update_components(self, measurements):
         self._kalman_filter.update(measurements)
-        inno_cov = self._kalman_filter.innovation_covariances
-        inv_inno_cov = self._kalman_filter.inv_innovation_covariances
-        num_meas = measurements.shape[0]
-        num_states = states.shape[0]
-        mult_weights = np.repeat(weights, num_meas, 1)
+        return self._kalman_filter.states, self._kalman_filter.covariances
 
-        updated_states = self._kalman_filter.states
-        updated_covariances = self._kalman_filter.inv_innovation_covariances
-        # compute difference between each measurement and each state
+    def _miss_components(self, weights, means, covariances):
+        weights = (1 - self._probability_detection) * weights
+        return weights, means, covariances
 
-        inno_dets = np.reshape(np.linalg.det(2 * np.pi * inno_cov), (1, -1))
-        innovations = self._kalman_filter.innovation
-        exponent = innovations[:, np.newaxis] @ inv_inno_cov @ np.transpose(innovations[:, np.newaxis],
-                                                                            (0, 2, 1))
-        exponent = np.reshape(exponent, (1, -1))
-        gaussians = (inno_dets ^ (-1 / 2)) * np.exp((-1 / 2) * exponent)
+    def _compute_q_matrix(self):
+        """
+        The returned matrix is indexed by measurement and state, in that order, with scalars as values
+        :return:
+        """
+        # innovations are indexed by state, then by measurement, so we need to transpose
+        innovations = np.transpose(self._kalman_filter.innovations, (1, 0, 2))
+        # number of inverse innovation covariances is equal to number of states
+        inv_innovation_covariances = self._kalman_filter.inv_innovation_covariances
+        innovation_covariances = self._kalman_filter.innovation_covariances
 
-        scaled_weights = self._probability_detection * mult_weights * gaussians
-        l_weights = np.reshape(scaled_weights, (num_meas, num_states))
-        sum_weights = np.sum(l_weights, axis=1)
-        sum_weights = np.reshape(sum_weights, (-1, 1))
-        coeffs = self._clutter_lambda * self._clutter_density + sum_weights
-        l_up_weights = l_weights / coeffs
-        updated_weights = np.reshape(l_up_weights, (1, -1))
+        first_factor = -(1 / 2)
+        second_factor = innovations[:, :, np.newaxis, :]
+        third_factor = inv_innovation_covariances
+        fourth_factor = innovations[:, :, :, np.newaxis]
+        first_product = np.exp(first_factor * second_factor @ third_factor @ fourth_factor)
 
-        return updated_weights, updated_states, updated_covariances
+        scaling_factors_inv = np.reshape(np.sqrt(np.linalg.det(2 * np.pi * innovation_covariances)), (1, -1))
 
-    def merge(self, treshold, cap):
-        copy_weights = self._weights
-        copy_states = self._kalman_filter.state
-        copy_covs = self._kalman_filter.covariances
+        return (1 / scaling_factors_inv) * np.squeeze(first_product)
 
-        cap_indices = (copy_weights > cap)
-        copy_weights = copy_weights[cap_indices]
-        copy_states = copy_states[cap_indices, :]
-        copy_covs = copy_covs[cap_indices, :, :]
+    def _update_weights(self, q_matrix, predicted_weights):
+        first_factor = self._probability_detection * predicted_weights * q_matrix
+        first_summand = self._clutter_density
+        second_summand = np.sum(first_factor, axis=1)
+        denominator = np.reshape(first_summand + second_summand, (-1, 1))
+        new_weights = np.transpose(first_factor / denominator)
+        return np.reshape(new_weights, (1, -1))
 
-        new_weights = []
-        new_states = []
-        new_covs = []
-
-        indices = np.arange(max(copy_weights.shape))
-        while not indices.size == 0:
-            # j index from paper
-            max_weight_index = np.argmax(copy_weights)
-            curr_state = copy_states[max_weight_index, :]
-            curr_cov = copy_covs[max_weight_index, :, :]
-
-            index_states = copy_states[indices, :]
-            diff_states = index_states - curr_state
-            inv_cov = np.linalg.inv(curr_cov)
-            # fast mahalanobis distance computation for many states
-            right_product = inv_cov @ diff_states.T
-            left_product = diff_states * right_product
-            distances = np.sum(left_product, axis=0)
-            # elements to keep for next iteration
-            keep_mask = distances >= treshold
-            # elements to merge in this iteration
-            merge_mask = distances < treshold
-
-            merge_weights = copy_weights[:, merge_mask]
-            merge_states = copy_states[merge_mask, :]
-            merge_covariances = copy_covs[merge_mask, :, :]
-
-            sum_weight = np.sum(merge_weights)
-            weighted_states = np.reshape(merge_weights, (-1, 1)) * merge_states
-            mean_state = np.sum(weighted_states, axis=0) / sum_weight
-
-            diff_states = mean_state - merge_states
-            # broadcast to compute outer product of each row with itself
-            diff_states = diff_states[:, np.newaxis, :]
-            outer_product = np.transpose(diff_states, (0, 2, 1)) @ diff_states
-            sum_covariances = merge_covariances + outer_product
-            weighted_covariances = merge_weights.T[:, :, np.newaxis] * sum_covariances
-            mean_covariance = weighted_covariances / sum_weight
-
-            copy_weights = copy_weights[:, keep_mask]
-            copy_states = copy_states[keep_mask, :]
-            copy_covs = copy_covs[keep_mask, :]
-            indices = indices[keep_mask]
-
-            new_weights.append(sum_weight)
-            new_states.append(mean_state)
-            new_covs.append(mean_covariance)
-
-        self._weights = np.array(new_weights).reshape((1, -1))
-        self._kalman_filter.state = np.array(new_states)
-        self._kalman_filter.covariances = np.array(new_covs)
-
-    def cap(self, num):
-        num_comps = max(self._weights.shape)
-        if num_comps >= num:
-            sort_indices = np.argsort(self._weights)
-            top_num = sort_indices[0 : num]
-            self._weights = self._weights[0 : top_num]
-            self._kalman_filter.state = self._kalman_filter.state[0:top_num, :]
-            self._kalman_filter.covariances = self._kalman_filter.covariances[0:top_num, :, :]
+    def get_components(self):
+        return np.copy(self._weights), np.copy(self._means), np.copy(self._covariances)
