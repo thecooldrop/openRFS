@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.special as spec
-from estimation.kalman import Kalman
+from estimation.gaussian.kalman import Kalman
 
 
 class CPHD:

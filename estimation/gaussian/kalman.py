@@ -174,14 +174,6 @@ class Kalman(ABC):
     def update(self, measurements):
         pass
 
-    @abstractmethod
-    def pure_update(self):
-        pass
-
-    @abstractmethod
-    def compute_update_matrices(self):
-        pass
-
     @property
     def states(self):
         return self._states
@@ -304,7 +296,7 @@ class KF(Kalman):
                                  states,
                                  covariances)
 
-    def predict(self):
+    def predict(self, states=None, covariances=None):
         """
         Computes the predict step of classical Kalman filter
 
@@ -315,10 +307,22 @@ class KF(Kalman):
         only single control vector which is applied to all predicted states.
         """
 
-        self._states = self._states @ self._transition_model.T
-        self._covariances = self._transition_model @ self._covariances @ self._transition_model.T + self._transition_noise
+        store_inner = False
+        if not states or not covariances:
+            states = self._states
+            covariances = self._covariances
+            store_inner = True
 
-    def update(self, measurements):
+        predicted_states = states @ self._transition_model.T
+        predicted_covariances = self._transition_model @ covariances @ self._transition_model.T + self._transition_noise
+
+        if store_inner:
+            self._states = predicted_states
+            self._covariances = predicted_covariances
+
+        return predicted_states, predicted_covariances
+
+    def update(self, measurements, states=None, covariances=None):
         """
         Computes the update of each state with each measurement.
 
@@ -330,7 +334,7 @@ class KF(Kalman):
             - _innovation_covariances = 10x3x3 where the first dimension is indexed by old state and the objects of
             interest are 3x3 matrices
 
-            - _inv_innovation_covarainces = 10x3x3 where the first dimension is indexed by old state and objects of
+            - _inv_innovation_covariances = 10x3x3 where the first dimension is indexed by old state and objects of
             interest are 3x3 matrices
 
             - _kalman_gains = 10x4x3, where the first dimension is indexed by old state and objects of interest are
@@ -352,29 +356,48 @@ class KF(Kalman):
 
         :return: Returns updated states and covariance matrices
         """
+
+        store_inner = False
+        if not states or not covariances:
+            states = self._states
+            covariances = self._covariances
+            store_inner = True
+
         num_meas = measurements.shape[0]
-        self._expected_measurements = self._states @ self._measurement_model.T
-        self._innovations = measurements[:, np.newaxis, :] - self.expected_measurements
-        self._innovations = np.transpose(self._innovations, (1, 0, 2))
-        self.compute_update_matrices()
-        self._covariances = np.repeat(self._covariances, num_meas, axis=0)
-        self.pure_update()
+        expected_measurements = states @ self._measurement_model.T
+        innovations = measurements[:, np.newaxis, :] - expected_measurements
+        innovations = np.transpose(innovations, (1, 0, 2))
 
-    def compute_update_matrices(self):
-        dim = self._states.shape[1]
-        self._innovation_covariances = self._measurement_noise + \
-                                       self._measurement_model @ self._covariances @ self._measurement_model.T
-        self._inv_innovation_covariances = np.linalg.inv(self._innovation_covariances)
-        self._kalman_gains = self._covariances @ self._measurement_model.T @ self._inv_innovation_covariances
-        self._covariances = (np.eye(dim) - self._kalman_gains @ self._measurement_model) @ self._covariances
+        dim = states.shape[1]
+        innovation_covariances = self._measurement_noise + \
+                                       self._measurement_model @ covariances @ self._measurement_model.T
+        inv_innovation_covariances = np.linalg.inv(innovation_covariances)
+        kalman_gains = covariances @ self._measurement_model.T @ inv_innovation_covariances
+        covariances = (np.eye(dim) - kalman_gains @ self._measurement_model) @ covariances
+        covariances = np.repeat(covariances, num_meas, axis=0)
 
-    def pure_update(self):
-        self._states = self._states[:, np.newaxis, :] + self._innovations @ np.transpose(self._kalman_gains, (0, 2, 1))
-        if self._states.size > 0:
-            self._states = np.concatenate(self._states[:])
+        states = states[:, np.newaxis, :] + innovations @ np.transpose(kalman_gains, (0, 2, 1))
+        if states.size > 0:
+            states = np.concatenate(states[:])
         else:
-            self._states = np.empty((0, self._states.shape[-1]))
+            states = np.empty((0, states.shape[-1]))
 
+        if store_inner:
+            self._states = states
+            self._covariances = covariances
+            self._expected_measurements = expected_measurements
+            self._innovations = innovations
+            self._innovation_covariances = innovation_covariances
+            self._inv_innovation_covariances = inv_innovation_covariances
+            self._kalman_gains = kalman_gains
+
+        return states,\
+               covariances,\
+               expected_measurements,\
+               innovations,\
+               innovation_covariances,\
+               inv_innovation_covariances,\
+               kalman_gains
 
 class EKF(Kalman):
     class Builder(Kalman.Builder):
@@ -771,32 +794,4 @@ class UKF(Kalman):
             return outer_product
         else:
             return np.sum(outer_product, axis=-3)
-
-
-if __name__ == "__main__":
-    import numpy as np
-    from timeit import timeit
-    from estimation.kalman_factory import ccv_model
-    import cProfile
-
-    transition_matrix, transition_noise = ccv_model(1 / 30, 5, 4)
-    meas_matrix = np.eye(8)
-    meas_noise_matrix = np.eye(8)
-    initial_state = np.random.random((50, 8))
-    init_cov = np.random.random((50, 8, 8))
-    init_cov = 1/2*(init_cov + np.transpose(init_cov, (0, 2, 1))) + 5*np.eye(8)
-    def test_speed():
-        for _ in range(10000):
-            kf_filter = KF.Builder().with_states(initial_state) \
-                                    .with_covariances(init_cov) \
-                                    .with_transition_model(transition_matrix) \
-                                    .with_transition_noise(transition_noise) \
-                                    .with_measurement_model(meas_matrix) \
-                                    .with_measurement_noise(meas_noise_matrix) \
-                                    .build()
-            measurements = np.random.random((100,8))
-            kf_filter.predict()
-            kf_filter.update(measurements)
-
-    cProfile.run('test_speed()', sort='cumtime')
 

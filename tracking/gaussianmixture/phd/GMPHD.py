@@ -8,7 +8,7 @@ IEEE Trans Signal Processing, Vol. 54, No. 11, pp. 4091-4104, 2006
 
 import numpy as np
 
-from estimation.kalman import Kalman
+from estimation.gaussian.kalman import Kalman
 from util.mixins import GaussianMixtureMixin
 from numbers import Number
 
